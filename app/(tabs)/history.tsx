@@ -110,6 +110,24 @@ function formatTime(dateString: string) {
   });
 }
 
+function getDateKey(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function getRecordDateKey(dateString: string) {
+  const date = new Date(dateString);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return getDateKey(date);
+}
+
 export default function HistoryScreen() {
   const [records, setRecords] = useState<Attendance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,6 +136,13 @@ export default function HistoryScreen() {
   const [activeFilter, setActiveFilter] =
     useState<FilterStatus>('all');
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Calendar state
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(
+    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+  );
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const loadHistory = useCallback(async (showLoader = true) => {
     if (showLoader) {
@@ -187,6 +212,45 @@ export default function HistoryScreen() {
     return matchesStatus && matchesSearch;
   });
 
+  // Calendar helpers
+  const changeMonth = (amount: number) => {
+    setCalendarMonth(
+      new Date(
+        calendarMonth.getFullYear(),
+        calendarMonth.getMonth() + amount,
+        1
+      )
+    );
+    setSelectedDate(null);
+  };
+
+  const getRecordsForDate = (dateKey: string) =>
+    records.filter(
+      (record) => getRecordDateKey(record.scanned_at) === dateKey
+    );
+
+  const calendarDays = new Date(
+    calendarMonth.getFullYear(),
+    calendarMonth.getMonth() + 1,
+    0
+  ).getDate();
+
+  const firstWeekday = new Date(
+    calendarMonth.getFullYear(),
+    calendarMonth.getMonth(),
+    1
+  ).getDay();
+
+  const monthRecords = records.filter((record) => {
+    const date = new Date(record.scanned_at);
+
+    return (
+      !Number.isNaN(date.getTime()) &&
+      date.getFullYear() === calendarMonth.getFullYear() &&
+      date.getMonth() === calendarMonth.getMonth()
+    );
+  });
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -243,10 +307,25 @@ export default function HistoryScreen() {
               <Text style={styles.headerIconText}>◷</Text>
             </View>
 
-            <View style={styles.headerBadge}>
+            {/* FUNCTIONAL MY RECORDS BUTTON */}
+            <TouchableOpacity
+              style={[
+                styles.headerBadge,
+                showCalendar && styles.headerBadgeActive,
+              ]}
+              onPress={() => {
+                setShowCalendar((previous) => !previous);
+                setSelectedDate(null);
+              }}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Show or hide attendance calendar"
+            >
               <View style={styles.onlineDot} />
-              <Text style={styles.headerBadgeText}>MY RECORDS</Text>
-            </View>
+              <Text style={styles.headerBadgeText}>
+                {showCalendar ? 'HIDE CALENDAR' : 'MY RECORDS'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.eyebrow}>YOUR SCHOOL JOURNEY</Text>
@@ -339,7 +418,12 @@ export default function HistoryScreen() {
               </Text>
 
               <Text style={styles.statLabel}>Present</Text>
-              <View style={[styles.statBottomLine, { backgroundColor: '#A8B88A' }]} />
+              <View
+                style={[
+                  styles.statBottomLine,
+                  { backgroundColor: '#A8B88A' },
+                ]}
+              />
             </View>
 
             <View style={[styles.statCard, styles.lateCard]}>
@@ -355,7 +439,12 @@ export default function HistoryScreen() {
               </Text>
 
               <Text style={styles.statLabel}>Late</Text>
-              <View style={[styles.statBottomLine, { backgroundColor: '#D8B46C' }]} />
+              <View
+                style={[
+                  styles.statBottomLine,
+                  { backgroundColor: '#D8B46C' },
+                ]}
+              />
             </View>
 
             <View style={[styles.statCard, styles.excusedCard]}>
@@ -371,7 +460,12 @@ export default function HistoryScreen() {
               </Text>
 
               <Text style={styles.statLabel}>Excused</Text>
-              <View style={[styles.statBottomLine, { backgroundColor: '#B77B91' }]} />
+              <View
+                style={[
+                  styles.statBottomLine,
+                  { backgroundColor: '#B77B91' },
+                ]}
+              />
             </View>
 
             <View style={[styles.statCard, styles.absentCard]}>
@@ -387,9 +481,322 @@ export default function HistoryScreen() {
               </Text>
 
               <Text style={styles.statLabel}>Absent</Text>
-              <View style={[styles.statBottomLine, { backgroundColor: '#D99191' }]} />
+              <View
+                style={[
+                  styles.statBottomLine,
+                  { backgroundColor: '#D99191' },
+                ]}
+              />
             </View>
           </View>
+
+          {/* ATTENDANCE CALENDAR */}
+          {showCalendar && (
+            <View style={styles.calendarCard}>
+              <View style={styles.calendarHeadingRow}>
+                <View style={styles.calendarHeadingIcon}>
+                  <Text style={styles.calendarHeadingEmoji}>▦</Text>
+                </View>
+
+                <View style={styles.calendarHeadingInfo}>
+                  <Text style={styles.calendarTitle}>
+                    Attendance Calendar
+                  </Text>
+                  <Text style={styles.calendarSubtitle}>
+                    Your recorded attendance by date
+                  </Text>
+                </View>
+              </View>
+
+              {/* MONTH NAVIGATION */}
+              <View style={styles.calendarNavigation}>
+                <TouchableOpacity
+                  style={styles.monthButton}
+                  onPress={() => changeMonth(-1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous month"
+                >
+                  <Text style={styles.monthButtonText}>‹</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.monthTitle}>
+                  {calendarMonth.toLocaleDateString(undefined, {
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.monthButton}
+                  onPress={() => changeMonth(1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next month"
+                >
+                  <Text style={styles.monthButtonText}>›</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* WEEKDAY HEADINGS */}
+              <View style={styles.calendarGrid}>
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(
+                  (day, index) => (
+                    <View
+                      key={`${day}-${index}`}
+                      style={styles.calendarCell}
+                    >
+                      <Text style={styles.calendarWeekday}>
+                        {day}
+                      </Text>
+                    </View>
+                  )
+                )}
+
+                {/* EMPTY CELLS BEFORE THE FIRST DAY */}
+                {Array.from({ length: firstWeekday }).map((_, index) => (
+                  <View
+                    key={`blank-${index}`}
+                    style={styles.calendarCell}
+                  />
+                ))}
+
+                {/* MONTH DATES */}
+                {Array.from(
+                  { length: calendarDays },
+                  (_, index) => index + 1
+                ).map((day) => {
+                  const dateKey = getDateKey(
+                    new Date(
+                      calendarMonth.getFullYear(),
+                      calendarMonth.getMonth(),
+                      day
+                    )
+                  );
+
+                  const dayRecords = getRecordsForDate(dateKey);
+
+                  const hasPresent = dayRecords.some(
+                    (record) =>
+                      getStatus(record.status) === 'present'
+                  );
+
+                  const hasLate = dayRecords.some(
+                    (record) =>
+                      getStatus(record.status) === 'late'
+                  );
+
+                  const hasOtherStatus = dayRecords.some((record) => {
+                    const status = getStatus(record.status);
+                    return (
+                      status === 'excused' || status === 'absent'
+                    );
+                  });
+
+                  const isSelected = selectedDate === dateKey;
+
+                  return (
+                    <TouchableOpacity
+                      key={dateKey}
+                      style={[
+                        styles.calendarCell,
+                        styles.calendarDay,
+                        hasPresent && styles.presentDay,
+                        !hasPresent && hasLate && styles.lateDay,
+                        !hasPresent &&
+                          !hasLate &&
+                          hasOtherStatus &&
+                          styles.otherStatusDay,
+                        isSelected && styles.selectedDay,
+                      ]}
+                      onPress={() => setSelectedDate(dateKey)}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${day}, ${dayRecords.length} attendance records`}
+                    >
+                      <Text
+                        style={[
+                          styles.calendarDayText,
+                          (hasPresent || hasLate || hasOtherStatus) &&
+                            styles.markedDayText,
+                          isSelected && styles.selectedDayText,
+                        ]}
+                      >
+                        {day}
+                      </Text>
+
+                      {dayRecords.length > 0 && (
+                        <View
+                          style={[
+                            styles.calendarDot,
+                            hasPresent && styles.presentDot,
+                            !hasPresent &&
+                              hasLate &&
+                              styles.lateDot,
+                            !hasPresent &&
+                              !hasLate &&
+                              hasOtherStatus &&
+                              styles.otherStatusDot,
+                          ]}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* CALENDAR LEGEND */}
+              <View style={styles.calendarLegend}>
+                <View style={styles.legendItem}>
+                  <View
+                    style={[
+                      styles.legendDot,
+                      { backgroundColor: '#78965F' },
+                    ]}
+                  />
+                  <Text style={styles.legendText}>Present</Text>
+                </View>
+
+                <View style={styles.legendItem}>
+                  <View
+                    style={[
+                      styles.legendDot,
+                      { backgroundColor: '#C9953C' },
+                    ]}
+                  />
+                  <Text style={styles.legendText}>Late</Text>
+                </View>
+
+                <View style={styles.legendItem}>
+                  <View
+                    style={[
+                      styles.legendDot,
+                      { backgroundColor: '#A75C76' },
+                    ]}
+                  />
+                  <Text style={styles.legendText}>Other</Text>
+                </View>
+              </View>
+
+              <View style={styles.monthSummary}>
+                <Text style={styles.monthSummaryLabel}>
+                  THIS MONTH
+                </Text>
+
+                <Text style={styles.monthSummaryValue}>
+                  {monthRecords.length} attendance record
+                  {monthRecords.length === 1 ? '' : 's'}
+                </Text>
+
+                <View style={styles.monthSummaryCounts}>
+                  <Text style={styles.monthPresentCount}>
+                    Present: {monthRecords.filter(
+                      (record) =>
+                        getStatus(record.status) === 'present'
+                    ).length}
+                  </Text>
+
+                  <Text style={styles.monthLateCount}>
+                    Late: {monthRecords.filter(
+                      (record) =>
+                        getStatus(record.status) === 'late'
+                    ).length}
+                  </Text>
+                </View>
+              </View>
+
+              {/* SELECTED DATE DETAILS */}
+              {selectedDate !== null && (
+                <View style={styles.selectedDatePanel}>
+                  <Text style={styles.selectedDateTitle}>
+                    {new Date(
+                      `${selectedDate}T12:00:00`
+                    ).toLocaleDateString(undefined, {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </Text>
+
+                  {getRecordsForDate(selectedDate).length === 0 ? (
+                    <Text style={styles.selectedDateEmpty}>
+                      No attendance records for this date.
+                    </Text>
+                  ) : (
+                    getRecordsForDate(selectedDate).map((record) => {
+                      const status = getStatus(record.status);
+                      const statusColors =
+                        status !== 'unknown'
+                          ? STATUS_COLORS[status]
+                          : null;
+
+                      return (
+                        <View
+                          key={record.id}
+                          style={styles.calendarRecord}
+                        >
+                          <View style={styles.calendarRecordHeader}>
+                            <Text style={styles.calendarRecordTitle}>
+                              {record.event?.title ?? 'School Event'}
+                            </Text>
+
+                            <View
+                              style={[
+                                styles.calendarRecordBadge,
+                                {
+                                  backgroundColor:
+                                    statusColors?.background ?? '#EDEBE4',
+                                },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.calendarRecordStatus,
+                                  {
+                                    color:
+                                      statusColors?.text ??
+                                      COLORS.burgundyText,
+                                  },
+                                ]}
+                              >
+                                {record.status.toUpperCase()}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <Text style={styles.calendarRecordDetail}>
+                            Event code: {record.event?.event_code ?? 'N/A'}
+                          </Text>
+
+                          <Text style={styles.calendarRecordDetail}>
+                            Time scanned: {formatTime(record.scanned_at)}
+                          </Text>
+
+                          <Text style={styles.calendarRecordDetail}>
+                            Venue: {record.event?.venue ?? 'Not specified'}
+                          </Text>
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              )}
+
+              {records.length === 0 && (
+                <View style={styles.calendarEmpty}>
+                  <Text style={styles.calendarEmptyEmoji}>📅</Text>
+
+                  <Text style={styles.calendarEmptyTitle}>
+                    No attendance yet
+                  </Text>
+
+                  <Text style={styles.calendarEmptyText}>
+                    When you scan an event QR code, your attendance
+                    date will be marked here automatically.
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* RECENT ACTIVITY */}
           <View style={styles.sectionHeader}>
@@ -479,7 +886,9 @@ export default function HistoryScreen() {
               </View>
 
               <Text style={styles.emptyEyebrow}>
-                {records.length === 0 ? 'YOUR JOURNEY STARTS HERE' : 'NO RESULTS FOUND'}
+                {records.length === 0
+                  ? 'YOUR JOURNEY STARTS HERE'
+                  : 'NO RESULTS FOUND'}
               </Text>
 
               <Text style={styles.emptyTitle}>
@@ -747,6 +1156,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
 
+  headerBadgeActive: {
+    backgroundColor: COLORS.paleMatcha,
+  },
+
   onlineDot: {
     width: 7,
     height: 7,
@@ -919,7 +1332,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.muted,
     marginTop: 5,
-    marginBottom: 0,
     lineHeight: 18,
   },
 
@@ -1003,6 +1415,315 @@ const styles = StyleSheet.create({
     height: 4,
     width: 34,
     borderRadius: 3,
+  },
+
+  /* CALENDAR STYLES */
+  calendarCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 17,
+    marginTop: 22,
+    marginBottom: 8,
+  },
+
+  calendarHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 17,
+  },
+
+  calendarHeadingIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    backgroundColor: COLORS.paleMatcha,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+
+  calendarHeadingEmoji: {
+    fontSize: 25,
+    color: COLORS.burgundy,
+  },
+
+  calendarHeadingInfo: {
+    flex: 1,
+  },
+
+  calendarTitle: {
+    color: COLORS.darkBurgundy,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+
+  calendarSubtitle: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+
+  calendarNavigation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 13,
+  },
+
+  monthButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: COLORS.paleMatcha,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  monthButtonText: {
+    fontSize: 27,
+    fontWeight: '800',
+    color: COLORS.burgundy,
+    lineHeight: 32,
+  },
+
+  monthTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: COLORS.burgundy,
+  },
+
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+
+  calendarCell: {
+    width: '14.285714%',
+    height: 43,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  calendarWeekday: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: COLORS.muted,
+  },
+
+  calendarDay: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+
+  calendarDayText: {
+    color: COLORS.burgundyText,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  presentDay: {
+    backgroundColor: '#E7EDD9',
+  },
+
+  lateDay: {
+    backgroundColor: '#F8EBD1',
+  },
+
+  otherStatusDay: {
+    backgroundColor: '#F0E5E9',
+  },
+
+  markedDayText: {
+    color: COLORS.burgundy,
+    fontWeight: '900',
+  },
+
+  selectedDay: {
+    borderColor: COLORS.burgundy,
+    borderWidth: 2,
+  },
+
+  selectedDayText: {
+    color: COLORS.burgundy,
+    fontWeight: '900',
+  },
+
+  calendarDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: COLORS.muted,
+    marginTop: 2,
+  },
+
+  presentDot: {
+    backgroundColor: '#78965F',
+  },
+
+  lateDot: {
+    backgroundColor: '#C9953C',
+  },
+
+  otherStatusDot: {
+    backgroundColor: '#A75C76',
+  },
+
+  calendarLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 13,
+    marginTop: 16,
+    paddingTop: 13,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+
+  legendText: {
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  monthSummary: {
+    marginTop: 15,
+    padding: 13,
+    borderRadius: 14,
+    backgroundColor: COLORS.cream,
+  },
+
+  monthSummaryLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: COLORS.muted,
+    letterSpacing: 1.3,
+  },
+
+  monthSummaryValue: {
+    color: COLORS.darkBurgundy,
+    fontSize: 14,
+    fontWeight: '900',
+    marginTop: 6,
+  },
+
+  monthSummaryCounts: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 15,
+    marginTop: 8,
+  },
+
+  monthPresentCount: {
+    color: '#48613B',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  monthLateCount: {
+    color: '#94651F',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  selectedDatePanel: {
+    marginTop: 17,
+    padding: 13,
+    borderRadius: 15,
+    backgroundColor: COLORS.cream,
+  },
+
+  selectedDateTitle: {
+    color: COLORS.darkBurgundy,
+    fontSize: 14,
+    fontWeight: '900',
+    marginBottom: 8,
+  },
+
+  selectedDateEmpty: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 19,
+  },
+
+  calendarRecord: {
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+
+  calendarRecordHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+
+  calendarRecordTitle: {
+    color: COLORS.burgundy,
+    fontSize: 13,
+    fontWeight: '900',
+    flex: 1,
+  },
+
+  calendarRecordBadge: {
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+
+  calendarRecordStatus: {
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  calendarRecordDetail: {
+    color: COLORS.burgundyText,
+    fontSize: 11,
+    marginTop: 6,
+  },
+
+  calendarEmpty: {
+    alignItems: 'center',
+    paddingVertical: 23,
+    paddingHorizontal: 10,
+    marginTop: 15,
+    borderRadius: 16,
+    backgroundColor: COLORS.cream,
+  },
+
+  calendarEmptyEmoji: {
+    fontSize: 29,
+    marginBottom: 9,
+  },
+
+  calendarEmptyTitle: {
+    color: COLORS.darkBurgundy,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  calendarEmptyText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginTop: 7,
   },
 
   countBadge: {

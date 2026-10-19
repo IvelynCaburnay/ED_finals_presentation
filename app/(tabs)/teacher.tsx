@@ -1,4 +1,3 @@
-
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
@@ -10,7 +9,11 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
 import QRCode from 'react-native-qrcode-svg';
 
 import {
@@ -34,6 +37,9 @@ type AnalyticsReport = {
   status: Event['status'];
 };
 
+type PickerTarget = 'start' | 'end';
+type PickerMode = 'date' | 'time';
+
 const COLORS = {
   burgundy: '#701F35',
   darkBurgundy: '#351923',
@@ -47,16 +53,32 @@ const COLORS = {
   paleRose: '#F2E1E5',
 };
 
+function formatLocalDateTime(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hours}:${minutes}:00`;
+}
+
+function parseLocalDateTime(value: string) {
+  if (!value) return new Date();
+
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 export default function TeacherScreen() {
   const router = useRouter();
 
   const [events, setEvents] = useState<Event[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-
   const [showForm, setShowForm] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [showAttendance, setShowAttendance] = useState(false);
-
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [title, setTitle] = useState('');
@@ -70,7 +92,10 @@ export default function TeacherScreen() {
   const [analytics, setAnalytics] = useState<AnalyticsReport[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
-  // LOAD EVENTS AND ANALYTICS
+  // Date and time picker state
+  const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null);
+  const [pickerMode, setPickerMode] = useState<PickerMode>('date');
+  const [pickerDate, setPickerDate] = useState(new Date());
 
   const loadEvents = useCallback(async () => {
     setAnalyticsLoading(true);
@@ -89,14 +114,16 @@ export default function TeacherScreen() {
       const reports = await Promise.all(
         loadedEvents.map(async (event) => {
           try {
-            const { data: attendanceData, error: attendanceError } =
-              await getAttendanceForEvent(event.id);
+            const {
+              data: attendanceData,
+              error: attendanceError,
+            } = await getAttendanceForEvent(event.id);
 
             if (attendanceError) {
               console.log(
                 'Analytics attendance error:',
                 event.title,
-                attendanceError.message
+                attendanceError.message,
               );
 
               return {
@@ -126,14 +153,14 @@ export default function TeacherScreen() {
               status: event.status,
             };
           }
-        })
+        }),
       );
 
       setAnalytics(reports);
     } catch (error: any) {
       Alert.alert(
         'Error',
-        error?.message || 'Unable to load events.'
+        error?.message || 'Unable to load events.',
       );
     } finally {
       setAnalyticsLoading(false);
@@ -143,11 +170,10 @@ export default function TeacherScreen() {
   useFocusEffect(
     useCallback(() => {
       loadEvents();
-    }, [loadEvents])
+    }, [loadEvents]),
   );
 
   // FORM HELPERS
-
   function clearForm() {
     setTitle('');
     setEventCode('');
@@ -156,6 +182,8 @@ export default function TeacherScreen() {
     setStartTime('');
     setEndTime('');
     setEditingId(null);
+    setPickerTarget(null);
+    setPickerMode('date');
   }
 
   function openCreate() {
@@ -171,11 +199,68 @@ export default function TeacherScreen() {
     setDescription(event.description ?? '');
     setStartTime(event.start_time);
     setEndTime(event.end_time);
+    setPickerTarget(null);
+    setPickerMode('date');
     setShowForm(true);
   }
 
-  // CREATE OR UPDATE EVENT
+  // DATE AND TIME PICKER
+  function openDatePicker(target: PickerTarget) {
+    const value = target === 'start' ? startTime : endTime;
 
+    setPickerDate(parseLocalDateTime(value));
+    setPickerTarget(target);
+    setPickerMode('date');
+  }
+
+  function handleDateTimeChange(
+    event: DateTimePickerEvent,
+    selectedDate?: Date,
+  ) {
+    if (event.type === 'dismissed' || !selectedDate || !pickerTarget) {
+      setPickerTarget(null);
+      setPickerMode('date');
+      return;
+    }
+
+    if (pickerMode === 'date') {
+      // Keep the selected date and move to the clock picker.
+      const updatedDate = new Date(pickerDate);
+
+      updatedDate.setFullYear(
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        selectedDate.getDate(),
+      );
+
+      setPickerDate(updatedDate);
+      setPickerMode('time');
+      return;
+    }
+
+    // Save the chosen time with the previously selected date.
+    const finalDate = new Date(pickerDate);
+
+    finalDate.setHours(
+      selectedDate.getHours(),
+      selectedDate.getMinutes(),
+      0,
+      0,
+    );
+
+    const formattedValue = formatLocalDateTime(finalDate);
+
+    if (pickerTarget === 'start') {
+      setStartTime(formattedValue);
+    } else {
+      setEndTime(formattedValue);
+    }
+
+    setPickerTarget(null);
+    setPickerMode('date');
+  }
+
+  // CREATE OR UPDATE EVENT
   async function handleSave() {
     if (!title.trim()) {
       Alert.alert('Validation', 'Event title is required.');
@@ -193,7 +278,10 @@ export default function TeacherScreen() {
     }
 
     if (!startTime.trim() || !endTime.trim()) {
-      Alert.alert('Validation', 'Start and end times are required.');
+      Alert.alert(
+        'Validation',
+        'Please select both the start and end date/time.',
+      );
       return;
     }
 
@@ -204,15 +292,15 @@ export default function TeacherScreen() {
       Number.isNaN(start.getTime()) ||
       Number.isNaN(end.getTime())
     ) {
-      Alert.alert(
-        'Validation',
-        'Use a valid date/time format, such as 2026-10-02T09:00:00.'
-      );
+      Alert.alert('Validation', 'Please select valid dates and times.');
       return;
     }
 
     if (end <= start) {
-      Alert.alert('Validation', 'End time must be after start time.');
+      Alert.alert(
+        'Validation',
+        'End time must be after start time.',
+      );
       return;
     }
 
@@ -239,7 +327,7 @@ export default function TeacherScreen() {
         'Success',
         editingId
           ? 'Event updated successfully.'
-          : 'Event created successfully.'
+          : 'Event created successfully.',
       );
 
       setShowForm(false);
@@ -248,13 +336,12 @@ export default function TeacherScreen() {
     } catch (error: any) {
       Alert.alert(
         'Error',
-        error?.message || 'Unable to save event.'
+        error?.message || 'Unable to save event.',
       );
     }
   }
 
   // CLOSE EVENT
-
   function handleClose(event: Event) {
     Alert.alert('Close Event', `Close "${event.title}"?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -275,7 +362,7 @@ export default function TeacherScreen() {
           } catch (error: any) {
             Alert.alert(
               'Error',
-              error?.message || 'Unable to close event.'
+              error?.message || 'Unable to close event.',
             );
           }
         },
@@ -284,7 +371,6 @@ export default function TeacherScreen() {
   }
 
   // DELETE EVENT
-
   function handleDelete(event: Event) {
     Alert.alert('Delete Event', `Delete "${event.title}"?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -305,7 +391,7 @@ export default function TeacherScreen() {
           } catch (error: any) {
             Alert.alert(
               'Error',
-              error?.message || 'Unable to delete event.'
+              error?.message || 'Unable to delete event.',
             );
           }
         },
@@ -314,14 +400,12 @@ export default function TeacherScreen() {
   }
 
   // SHOW QR CODE
-
   function handleShowQR(event: Event) {
     setSelectedEvent(event);
     setShowQR(true);
   }
 
   // VIEW ATTENDANCE
-
   async function handleAttendance(event: Event) {
     try {
       const { data, error } = await getAttendanceForEvent(event.id);
@@ -337,13 +421,12 @@ export default function TeacherScreen() {
     } catch (error: any) {
       Alert.alert(
         'Error',
-        error?.message || 'Unable to load attendance.'
+        error?.message || 'Unable to load attendance.',
       );
     }
   }
 
   // LOGOUT
-
   async function handleLogout() {
     try {
       const { error } = await supabase.auth.signOut({
@@ -359,34 +442,32 @@ export default function TeacherScreen() {
     } catch (error: any) {
       Alert.alert(
         'Logout Error',
-        error?.message || 'Unable to logout.'
+        error?.message || 'Unable to logout.',
       );
     }
   }
 
   // ANALYTICS TOTALS
-
   const totalCheckIns = analytics.reduce(
     (total, report) => total + (report.totalCheckIns ?? 0),
-    0
+    0,
   );
 
   const eventsWithCheckIns = analytics.filter(
     (report) =>
       report.totalCheckIns !== null &&
-      report.totalCheckIns > 0
+      report.totalCheckIns > 0,
   ).length;
 
   const eventsWithoutCheckIns = analytics.filter(
-    (report) => report.totalCheckIns === 0
+    (report) => report.totalCheckIns === 0,
   ).length;
 
   const reportsWithErrors = analytics.filter(
-    (report) => report.totalCheckIns === null
+    (report) => report.totalCheckIns === null,
   ).length;
 
   // SCREEN
-
   return (
     <ScrollView
       style={styles.container}
@@ -404,8 +485,7 @@ export default function TeacherScreen() {
         <Text style={styles.createButtonText}>＋ CREATE EVENT</Text>
       </Pressable>
 
-      {/* ANALYTICS */}
-
+      {/* ATTENDANCE ANALYTICS */}
       <Text style={styles.sectionTitle}>Attendance Analytics</Text>
 
       {analyticsLoading && (
@@ -431,13 +511,17 @@ export default function TeacherScreen() {
 
         <View style={[styles.analyticsCard, styles.analyticsCream]}>
           <Text style={styles.analyticsLabel}>Events With Check-ins</Text>
-          <Text style={styles.analyticsNumber}>{eventsWithCheckIns}</Text>
+          <Text style={styles.analyticsNumber}>
+            {eventsWithCheckIns}
+          </Text>
           <Text style={styles.analyticsHint}>Attendance recorded</Text>
         </View>
 
         <View style={[styles.analyticsCard, styles.analyticsNeutral]}>
           <Text style={styles.analyticsLabel}>No Check-ins Yet</Text>
-          <Text style={styles.analyticsNumber}>{eventsWithoutCheckIns}</Text>
+          <Text style={styles.analyticsNumber}>
+            {eventsWithoutCheckIns}
+          </Text>
           <Text style={styles.analyticsHint}>No records yet</Text>
         </View>
       </View>
@@ -453,7 +537,6 @@ export default function TeacherScreen() {
       )}
 
       {/* ATTENDANCE REPORTS */}
-
       <Text style={styles.sectionTitle}>Attendance Reports</Text>
 
       {analytics.length === 0 ? (
@@ -466,6 +549,7 @@ export default function TeacherScreen() {
         analytics.map((report) => (
           <View key={report.eventId} style={styles.reportCard}>
             <Text style={styles.reportTitle}>{report.title}</Text>
+
             <Text style={styles.reportCode}>
               Event Code: {report.eventCode}
             </Text>
@@ -490,12 +574,10 @@ export default function TeacherScreen() {
               style={styles.reportButton}
               onPress={() => {
                 const event = events.find(
-                  (item) => item.id === report.eventId
+                  (item) => item.id === report.eventId,
                 );
 
-                if (event) {
-                  handleAttendance(event);
-                }
+                if (event) handleAttendance(event);
               }}
             >
               <Text style={styles.reportButtonText}>
@@ -507,7 +589,6 @@ export default function TeacherScreen() {
       )}
 
       {/* MY EVENTS */}
-
       <Text style={styles.sectionTitle}>My Events</Text>
 
       {events.length === 0 ? (
@@ -600,17 +681,21 @@ export default function TeacherScreen() {
       )}
 
       {/* CREATE / EDIT MODAL */}
-
       <Modal
         visible={showForm}
         animationType="slide"
-        onRequestClose={() => setShowForm(false)}
+        onRequestClose={() => {
+          setShowForm(false);
+          setPickerTarget(null);
+        }}
       >
         <ScrollView
           style={styles.modalContainer}
           contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.modalEyebrow}>EVENT MANAGEMENT</Text>
+
           <Text style={styles.modalTitle}>
             {editingId ? 'Edit Event' : 'Create Event'}
           </Text>
@@ -653,29 +738,106 @@ export default function TeacherScreen() {
             multiline
           />
 
+          {/* START DATE AND TIME */}
           <Text style={styles.label}>Start Date/Time</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="2026-10-02T09:00:00"
-            placeholderTextColor={COLORS.muted}
-            value={startTime}
-            onChangeText={setStartTime}
-          />
-          <Text style={styles.helper}>
-            Example: 2026-10-02T09:00:00
-          </Text>
 
+          <Pressable
+            style={styles.dateTimeInput}
+            onPress={() => openDatePicker('start')}
+          >
+            <Text
+              style={[
+                styles.dateTimeText,
+                !startTime && styles.placeholderText,
+              ]}
+            >
+              {startTime
+                ? parseLocalDateTime(startTime).toLocaleString()
+                : '📅 Select start date and time'}
+            </Text>
+
+            <Text style={styles.calendarIcon}>📅</Text>
+          </Pressable>
+
+          {/* END DATE AND TIME */}
           <Text style={styles.label}>End Date/Time</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="2026-10-02T12:00:00"
-            placeholderTextColor={COLORS.muted}
-            value={endTime}
-            onChangeText={setEndTime}
-          />
-          <Text style={styles.helper}>
-            Example: 2026-10-02T12:00:00
-          </Text>
+
+          <Pressable
+            style={styles.dateTimeInput}
+            onPress={() => openDatePicker('end')}
+          >
+            <Text
+              style={[
+                styles.dateTimeText,
+                !endTime && styles.placeholderText,
+              ]}
+            >
+              {endTime
+                ? parseLocalDateTime(endTime).toLocaleString()
+                : '📅 Select end date and time'}
+            </Text>
+
+            <Text style={styles.calendarIcon}>🕒</Text>
+          </Pressable>
+
+          {/* DATE / CLOCK PICKER */}
+          {pickerTarget !== null && (
+            <View style={styles.pickerContainer}>
+              <Text style={styles.pickerTitle}>
+                {pickerTarget === 'start' ? 'Start' : 'End'}{' '}
+                {pickerMode === 'date' ? 'Date' : 'Time'}
+              </Text>
+
+              <DateTimePicker
+                key={`${pickerTarget}-${pickerMode}`}
+                value={pickerDate}
+                mode={pickerMode}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={handleDateTimeChange}
+              />
+
+              {Platform.OS === 'ios' && (
+                <Pressable
+                  style={styles.pickerDoneButton}
+                  onPress={() => {
+                    if (pickerMode === 'date') {
+                      setPickerMode('time');
+                    } else {
+                      const formattedValue =
+                        formatLocalDateTime(pickerDate);
+
+                      if (pickerTarget === 'start') {
+                        setStartTime(formattedValue);
+                      } else {
+                        setEndTime(formattedValue);
+                      }
+
+                      setPickerTarget(null);
+                      setPickerMode('date');
+                    }
+                  }}
+                >
+                  <Text style={styles.pickerDoneText}>
+                    {pickerMode === 'date'
+                      ? 'NEXT: SELECT TIME'
+                      : 'DONE'}
+                  </Text>
+                </Pressable>
+              )}
+
+              <Pressable
+                style={styles.pickerCancelButton}
+                onPress={() => {
+                  setPickerTarget(null);
+                  setPickerMode('date');
+                }}
+              >
+                <Text style={styles.pickerCancelText}>
+                  CANCEL PICKER
+                </Text>
+              </Pressable>
+            </View>
+          )}
 
           <Pressable style={styles.saveButton} onPress={handleSave}>
             <Text style={styles.saveButtonText}>
@@ -696,7 +858,6 @@ export default function TeacherScreen() {
       </Modal>
 
       {/* QR MODAL */}
-
       <Modal
         visible={showQR}
         transparent
@@ -707,6 +868,7 @@ export default function TeacherScreen() {
           <View style={styles.qrModal}>
             <Text style={styles.modalEyebrow}>SCAN TO ATTEND</Text>
             <Text style={styles.qrTitle}>Event QR Code</Text>
+
             <Text style={styles.qrEvent}>
               {selectedEvent?.title}
             </Text>
@@ -735,7 +897,6 @@ export default function TeacherScreen() {
       </Modal>
 
       {/* ATTENDANCE MODAL */}
-
       <Modal
         visible={showAttendance}
         animationType="slide"
@@ -747,6 +908,7 @@ export default function TeacherScreen() {
         >
           <Text style={styles.modalEyebrow}>EVENT RECORDS</Text>
           <Text style={styles.modalTitle}>Attendance</Text>
+
           <Text style={styles.qrEvent}>
             {selectedEvent?.title}
           </Text>
@@ -791,7 +953,6 @@ export default function TeacherScreen() {
       </Modal>
 
       {/* LOGOUT */}
-
       <Pressable style={styles.logoutButton} onPress={handleLogout}>
         <Text style={styles.logoutButtonText}>LOG OUT</Text>
       </Pressable>
@@ -800,17 +961,14 @@ export default function TeacherScreen() {
 }
 
 // STYLES
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.cream,
   },
-
   content: {
     paddingBottom: 40,
   },
-
   header: {
     backgroundColor: COLORS.burgundy,
     paddingTop: 55,
@@ -819,7 +977,6 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 25,
     borderBottomRightRadius: 25,
   },
-
   eyebrow: {
     color: COLORS.matcha,
     fontSize: 11,
@@ -827,20 +984,17 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     marginBottom: 10,
   },
-
   title: {
     color: COLORS.white,
     fontSize: 28,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
-
   subtitle: {
     color: COLORS.paleMatcha,
     marginTop: 7,
     fontSize: 14,
   },
-
   createButton: {
     marginHorizontal: 20,
     marginTop: 22,
@@ -856,14 +1010,12 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
   },
-
   createButtonText: {
     color: COLORS.white,
     fontWeight: '800',
     fontSize: 14,
     letterSpacing: 0.8,
   },
-
   sectionTitle: {
     fontSize: 20,
     fontWeight: '800',
@@ -872,7 +1024,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     marginTop: 5,
   },
-
   empty: {
     backgroundColor: COLORS.white,
     marginHorizontal: 20,
@@ -883,13 +1034,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.paleMatcha,
   },
-
   emptyText: {
     color: COLORS.muted,
     textAlign: 'center',
     lineHeight: 21,
   },
-
   card: {
     backgroundColor: COLORS.white,
     marginHorizontal: 20,
@@ -904,58 +1053,48 @@ const styles = StyleSheet.create({
     shadowRadius: 7,
     shadowOffset: { width: 0, height: 3 },
   },
-
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
   },
-
   info: {
     flex: 1,
   },
-
   eventTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: COLORS.text,
     lineHeight: 24,
   },
-
   code: {
     color: COLORS.muted,
     fontSize: 12,
     marginTop: 5,
     fontWeight: '600',
   },
-
   status: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 20,
   },
-
   open: {
     backgroundColor: COLORS.paleMatcha,
   },
-
   closed: {
     backgroundColor: COLORS.paleRose,
   },
-
   statusText: {
     fontSize: 10,
     fontWeight: '800',
     color: COLORS.text,
   },
-
   detail: {
     color: '#686B5F',
     fontSize: 13,
     marginTop: 9,
     lineHeight: 19,
   },
-
   description: {
     color: '#686B5F',
     marginTop: 12,
@@ -965,7 +1104,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
   },
-
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -975,56 +1113,48 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F0EEE7',
   },
-
   actionPrimary: {
     backgroundColor: COLORS.burgundy,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 9,
   },
-
   actionGray: {
     backgroundColor: '#F0EEE7',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 9,
   },
-
   actionMatcha: {
     backgroundColor: COLORS.matcha,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 9,
   },
-
   actionGreen: {
     backgroundColor: COLORS.green,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 9,
   },
-
   actionRed: {
     backgroundColor: '#8D344A',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 9,
   },
-
   actionText: {
     color: COLORS.white,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
-
   actionTextDark: {
     color: COLORS.text,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
-
   analyticsLoading: {
     backgroundColor: COLORS.white,
     marginHorizontal: 20,
@@ -1035,7 +1165,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.paleMatcha,
   },
-
   analyticsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1043,7 +1172,6 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 26,
   },
-
   analyticsCard: {
     width: '47%',
     flexGrow: 1,
@@ -1059,44 +1187,36 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
   },
-
   analyticsRose: {
     backgroundColor: COLORS.paleRose,
   },
-
   analyticsMatcha: {
     backgroundColor: COLORS.paleMatcha,
   },
-
   analyticsCream: {
     backgroundColor: '#F2EBDD',
   },
-
   analyticsNeutral: {
     backgroundColor: '#EEE8E2',
   },
-
   analyticsLabel: {
     color: COLORS.text,
     fontSize: 12,
     fontWeight: '700',
     lineHeight: 18,
   },
-
   analyticsNumber: {
     color: COLORS.burgundy,
     fontSize: 31,
     fontWeight: '800',
     marginTop: 8,
   },
-
   analyticsHint: {
     color: COLORS.muted,
     fontSize: 11,
     marginTop: 5,
     lineHeight: 15,
   },
-
   analyticsWarning: {
     backgroundColor: '#F2EBDD',
     borderWidth: 1,
@@ -1106,13 +1226,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginBottom: 20,
   },
-
   analyticsWarningText: {
     color: '#6E4F27',
     fontSize: 12,
     lineHeight: 19,
   },
-
   reportCard: {
     backgroundColor: COLORS.white,
     marginHorizontal: 20,
@@ -1127,21 +1245,18 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
-
   reportTitle: {
     fontSize: 17,
     fontWeight: '800',
     color: COLORS.text,
     lineHeight: 23,
   },
-
   reportCode: {
     color: COLORS.muted,
     fontSize: 12,
     marginTop: 5,
     marginBottom: 13,
   },
-
   reportRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1150,25 +1265,21 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingVertical: 4,
   },
-
   reportLabel: {
     color: '#686B5F',
     fontSize: 13,
     flex: 1,
   },
-
   reportValue: {
     color: COLORS.text,
     fontSize: 12,
     fontWeight: '800',
   },
-
   reportCount: {
     color: COLORS.green,
     fontSize: 19,
     fontWeight: '800',
   },
-
   reportButton: {
     backgroundColor: COLORS.burgundy,
     paddingVertical: 13,
@@ -1177,25 +1288,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 16,
   },
-
   reportButtonText: {
     color: COLORS.white,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.4,
   },
-
   modalContainer: {
     flex: 1,
     backgroundColor: COLORS.cream,
   },
-
   modalContent: {
     padding: 22,
     paddingTop: 55,
     paddingBottom: 50,
   },
-
   modalEyebrow: {
     color: COLORS.muted,
     fontSize: 11,
@@ -1204,14 +1311,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
-
   modalTitle: {
     fontSize: 28,
     fontWeight: '800',
     color: COLORS.burgundy,
     marginBottom: 22,
   },
-
   label: {
     fontSize: 14,
     fontWeight: '700',
@@ -1219,7 +1324,6 @@ const styles = StyleSheet.create({
     marginBottom: 7,
     marginTop: 12,
   },
-
   input: {
     minHeight: 50,
     backgroundColor: COLORS.white,
@@ -1230,20 +1334,73 @@ const styles = StyleSheet.create({
     color: COLORS.darkBurgundy,
     fontSize: 14,
   },
-
   textArea: {
     height: 100,
     paddingTop: 13,
     textAlignVertical: 'top',
   },
-
-  helper: {
-    fontSize: 11,
-    color: COLORS.muted,
-    marginTop: 6,
-    lineHeight: 16,
+  dateTimeInput: {
+    minHeight: 52,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: '#DADDD0',
+    borderRadius: 11,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
   },
-
+  dateTimeText: {
+    color: COLORS.darkBurgundy,
+    fontSize: 14,
+    flex: 1,
+  },
+  placeholderText: {
+    color: COLORS.muted,
+  },
+  calendarIcon: {
+    fontSize: 17,
+  },
+  pickerContainer: {
+    marginTop: 14,
+    padding: 14,
+    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.paleMatcha,
+    alignItems: 'center',
+  },
+  pickerTitle: {
+    color: COLORS.burgundy,
+    fontWeight: '800',
+    fontSize: 15,
+    marginBottom: 8,
+  },
+  pickerDoneButton: {
+    backgroundColor: COLORS.burgundy,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: 9,
+    alignItems: 'center',
+    marginTop: 10,
+    width: '100%',
+  },
+  pickerDoneText: {
+    color: COLORS.white,
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  pickerCancelButton: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 5,
+  },
+  pickerCancelText: {
+    color: COLORS.muted,
+    fontWeight: '700',
+    fontSize: 11,
+  },
   saveButton: {
     minHeight: 53,
     backgroundColor: COLORS.burgundy,
@@ -1252,14 +1409,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 26,
   },
-
   saveButtonText: {
     color: COLORS.white,
     fontWeight: '800',
     fontSize: 13,
     letterSpacing: 0.5,
   },
-
   cancelButton: {
     minHeight: 50,
     backgroundColor: COLORS.paleMatcha,
@@ -1268,14 +1423,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 12,
   },
-
   cancelButtonText: {
     color: COLORS.text,
     fontWeight: '800',
     fontSize: 13,
     letterSpacing: 0.4,
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(53, 25, 35, 0.72)',
@@ -1283,7 +1436,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-
   qrModal: {
     backgroundColor: COLORS.white,
     borderRadius: 22,
@@ -1294,14 +1446,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.paleMatcha,
   },
-
   qrTitle: {
     fontSize: 23,
     fontWeight: '800',
     color: COLORS.burgundy,
     marginBottom: 10,
   },
-
   qrEvent: {
     fontSize: 17,
     fontWeight: '700',
@@ -1310,7 +1460,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
   },
-
   qrBox: {
     backgroundColor: COLORS.white,
     padding: 12,
@@ -1318,7 +1467,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.paleMatcha,
   },
-
   qrCode: {
     fontSize: 13,
     color: COLORS.muted,
@@ -1326,7 +1474,6 @@ const styles = StyleSheet.create({
     marginTop: 15,
     marginBottom: 5,
   },
-
   attendanceCard: {
     backgroundColor: COLORS.white,
     borderRadius: 14,
@@ -1340,19 +1487,16 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-
   studentName: {
     fontSize: 16,
     fontWeight: '800',
     color: COLORS.text,
   },
-
   studentEmail: {
     fontSize: 13,
     color: COLORS.muted,
     marginTop: 4,
   },
-
   present: {
     color: COLORS.green,
     backgroundColor: COLORS.paleMatcha,
@@ -1365,7 +1509,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 10,
   },
-
   logoutButton: {
     minHeight: 52,
     backgroundColor: COLORS.burgundy,
@@ -1376,7 +1519,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 25,
   },
-
   logoutButtonText: {
     color: COLORS.white,
     fontSize: 14,

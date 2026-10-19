@@ -1,5 +1,5 @@
 
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
@@ -16,56 +16,47 @@ type Role = 'student' | 'teacher' | 'admin';
 const COLORS = {
   burgundy: '#701F35',
   darkBurgundy: '#351923',
-  burgundyText: '#4C2531',
   matcha: '#A8B88A',
   paleMatcha: '#E7EDD9',
   cream: '#F8F7F2',
   muted: '#8A8F7B',
   white: '#FFFFFF',
-  border: '#E7E5DC',
 };
 
 export default function TabsLayout() {
-  const router = useRouter();
-
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
 
-    const loadUser = async () => {
-      try {
-        const {
-          data: { user },
-          error,
-        } = await supabase.auth.getUser();
-
-        if (!mounted) return;
-
-        if (error || !user) {
+    async function loadRole(userId: string | null) {
+      if (!userId) {
+        if (mounted) {
           setRole(null);
           setLoading(false);
-          return;
         }
+        return;
+      }
 
-        const profileResult = await getProfile(user.id);
+      try {
+        const result = await getProfile(userId);
 
         if (!mounted) return;
 
-        if (profileResult.error) {
+        if (result.error) {
           console.error(
             'Unable to load profile:',
-            profileResult.error.message
+            result.error.message
           );
           setRole(null);
-        } else if (profileResult.data) {
-          setRole(profileResult.data.role as Role);
+        } else if (result.data) {
+          setRole(result.data.role as Role);
         } else {
           setRole(null);
         }
       } catch (error) {
-        console.error('User loading error:', error);
+        console.error('Profile loading error:', error);
 
         if (mounted) {
           setRole(null);
@@ -75,57 +66,62 @@ export default function TabsLayout() {
           setLoading(false);
         }
       }
-    };
+    }
 
-    loadUser();
+    async function initialize() {
+      try {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
+
+        if (error) {
+          console.error(
+            'Unable to get current user:',
+            error.message
+          );
+
+          if (mounted) {
+            setRole(null);
+            setLoading(false);
+          }
+
+          return;
+        }
+
+        await loadRole(user?.id ?? null);
+      } catch (error) {
+        console.error('User initialization error:', error);
+
+        if (mounted) {
+          setRole(null);
+          setLoading(false);
+        }
+      }
+    }
+
+    initialize();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         if (!mounted) return;
 
         if (!session?.user) {
           setRole(null);
           setLoading(false);
-
-          // Do not navigate from the tab layout here.
-          // The app's authentication routing can handle
-          // the login screen.
           return;
         }
 
         setLoading(true);
 
-        try {
-          const profileResult = await getProfile(
-            session.user.id
-          );
-
-          if (!mounted) return;
-
-          if (profileResult.error) {
-            console.error(
-              'Auth profile error:',
-              profileResult.error.message
-            );
-            setRole(null);
-          } else if (profileResult.data) {
-            setRole(profileResult.data.role as Role);
-          } else {
-            setRole(null);
-          }
-        } catch (error) {
-          console.error('Auth profile error:', error);
-
+        // Load the user's role after the auth callback.
+        void Promise.resolve().then(() => {
           if (mounted) {
-            setRole(null);
+            void loadRole(session.user.id);
           }
-        } finally {
-          if (mounted) {
-            setLoading(false);
-          }
-        }
+        });
       }
     );
 
@@ -159,16 +155,11 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-
         tabBarActiveTintColor: COLORS.burgundy,
         tabBarInactiveTintColor: COLORS.muted,
-
         tabBarStyle: styles.tabBar,
-
         tabBarLabelStyle: styles.tabLabel,
-
         tabBarItemStyle: styles.tabItem,
-
         tabBarHideOnKeyboard: true,
       }}
     >
@@ -239,11 +230,7 @@ export default function TabsLayout() {
           href: role === 'teacher' ? '/(tabs)/teacher' : null,
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
-              name={
-                focused
-                  ? 'school'
-                  : 'school-outline'
-              }
+              name={focused ? 'school' : 'school-outline'}
               color={color}
               size={size}
             />
@@ -258,11 +245,7 @@ export default function TabsLayout() {
           href: role === 'admin' ? '/(tabs)/admin' : null,
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
-              name={
-                focused
-                  ? 'settings'
-                  : 'settings-outline'
-              }
+              name={focused ? 'settings' : 'settings-outline'}
               color={color}
               size={size}
             />
